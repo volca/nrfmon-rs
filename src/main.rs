@@ -61,7 +61,7 @@ fn main() {
             "--color" => color = true,
             "-h" | "--help" => {
                 println!(
-                    "usage: nrf-sniffer [port] [baud] [--color]\n\n  port  default {DEFAULT_PORT}\n  baud  default {DEFAULT_BAUD}\n  --color  colorize each field"
+                    "usage: nrfmon [port] [baud] [--color]\n\n  port  default {DEFAULT_PORT}\n  baud  default {DEFAULT_BAUD}\n  --color  colorize each field"
                 );
                 return;
             }

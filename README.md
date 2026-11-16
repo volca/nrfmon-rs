@@ -1,4 +1,4 @@
-# nrf-sniffer-rs
+# nrfmon-rs
 
 A small tool that reads the UART stream of an nRF Sniffer and prints the BLE
 advertising packets it captures.
@@ -12,9 +12,9 @@ cargo build --release
 ## Usage
 
 ```sh
-./target/release/nrf-sniffer                    # /dev/cu.usbmodem24201 @ 460800
-./target/release/nrf-sniffer /dev/cu.usbmodem123 1000000
-./target/release/nrf-sniffer --color
+./target/release/nrfmon                    # /dev/cu.usbmodem24201 @ 460800
+./target/release/nrfmon /dev/cu.usbmodem123 1000000
+./target/release/nrfmon --color
 ```
 
 Options:
