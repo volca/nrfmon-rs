@@ -22,8 +22,11 @@ use std::io::{Read, Write};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DEFAULT_PORT: &str = "/dev/cu.usbmodem24201";
 const DEFAULT_BAUD: u32 = 460_800;
+
+/// USB IDs of the nRF Sniffer for Bluetooth LE (1915:522a).
+const SNIFFER_VID: u16 = 0x1915;
+const SNIFFER_PID: u16 = 0x522a;
 
 const START: u8 = 0xAB;
 const END: u8 = 0xBC;
@@ -61,7 +64,7 @@ fn main() {
             "--color" => color = true,
             "-h" | "--help" => {
                 println!(
-                    "usage: nrfmon [port] [baud] [--color]\n\n  port  default {DEFAULT_PORT}\n  baud  default {DEFAULT_BAUD}\n  --color  colorize each field"
+                    "usage: nrfmon [port] [baud] [--color]\n\n  port  auto-detected when omitted\n  baud  default {DEFAULT_BAUD}\n  --color  colorize each field"
                 );
                 return;
             }
@@ -69,7 +72,19 @@ fn main() {
         }
     }
 
-    let port = args.first().cloned().unwrap_or_else(|| DEFAULT_PORT.to_string());
+    let port = match args.first() {
+        Some(p) => p.clone(),
+        None => match detect_port() {
+            Ok(p) => {
+                eprintln!("auto-detected {p}");
+                p
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    };
     let baud = match args.get(1) {
         Some(v) => match v.parse::<u32>() {
             Ok(b) => b,
@@ -112,6 +127,90 @@ fn main() {
         buf.extend_from_slice(&chunk[..n]);
         drain_frames(&mut buf, &mut state, color);
     }
+}
+
+/// Locate the nRF Sniffer serial port when the user did not pass one.
+fn detect_port() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut ports = Vec::new();
+        let entries = std::fs::read_dir("/dev").map_err(|e| format!("cannot scan /dev: {e}"))?;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("cu.usbmodem") {
+                ports.push(format!("/dev/{name}"));
+            }
+        }
+        ports.sort();
+        pick_port(ports)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // The by-id link carries the USB product name and survives replugging.
+        let mut ports = Vec::new();
+        if let Ok(entries) = std::fs::read_dir("/dev/serial/by-id") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if name.contains("nrf_sniffer") || name.contains("nrf-sniffer") {
+                    let path = entry.path();
+                    let path = std::fs::canonicalize(&path).unwrap_or(path);
+                    ports.push(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+        if ports.is_empty() {
+            ports = acm_ports_with_sniffer_ids();
+        }
+        pick_port(ports)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err("automatic port detection is unsupported on this platform; pass the port explicitly"
+            .to_string())
+    }
+}
+
+/// Accept a single candidate, otherwise say what the user has to choose.
+fn pick_port(mut ports: Vec<String>) -> Result<String, String> {
+    match ports.len() {
+        0 => Err(format!(
+            "no nRF Sniffer found (USB {SNIFFER_VID:04x}:{SNIFFER_PID:04x}); pass the serial port explicitly"
+        )),
+        1 => Ok(ports.remove(0)),
+        _ => Err(format!(
+            "multiple serial ports found, pass one explicitly:\n  {}",
+            ports.join("\n  ")
+        )),
+    }
+}
+
+/// USB CDC-ACM ports whose USB device carries the sniffer's vendor and product IDs.
+#[cfg(target_os = "linux")]
+fn acm_ports_with_sniffer_ids() -> Vec<String> {
+    let mut ports = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/sys/class/tty") else {
+        return ports;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("ttyACM") {
+            continue;
+        }
+        let Ok(device) = std::fs::canonicalize(entry.path().join("device")) else {
+            continue;
+        };
+        let ids = device.ancestors().take(4).find_map(|dir| {
+            let vid = std::fs::read_to_string(dir.join("idVendor")).ok()?;
+            let pid = std::fs::read_to_string(dir.join("idProduct")).ok()?;
+            Some((vid.trim().to_string(), pid.trim().to_string()))
+        });
+        if ids == Some((format!("{SNIFFER_VID:04x}"), format!("{SNIFFER_PID:04x}"))) {
+            ports.push(format!("/dev/{name}"));
+        }
+    }
+    ports
 }
 
 /// Put the serial port into raw 8N1 mode at the requested baud rate.

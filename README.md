@@ -12,7 +12,7 @@ cargo build --release
 ## Usage
 
 ```sh
-./target/release/nrfmon                    # /dev/cu.usbmodem24201 @ 460800
+./target/release/nrfmon                    # auto-detect the port
 ./target/release/nrfmon /dev/cu.usbmodem123 1000000
 ./target/release/nrfmon --color
 ```
@@ -21,12 +21,16 @@ Options:
 
 | Argument | Description |
 | --- | --- |
-| `port` | Serial port, default `/dev/cu.usbmodem24201` |
+| `port` | Serial port; auto-detected when omitted |
 | `baud` | Baud rate, default `460800` |
 | `--color` | Colorize the output |
 | `-h`, `--help` | Show usage |
 
-The port is configured with `stty` (raw, 8N1), Ctrl-C stops the capture.
+When no port is given the sniffer is looked up automatically: on macOS the
+`/dev/cu.usbmodem*` device is used, on Linux `/dev/serial/by-id` and the USB IDs
+(`1915:522a`) behind the ACM ports are matched. If several candidates are found
+the port must be passed explicitly. The port is configured with `stty`
+(raw, 8N1), Ctrl-C stops the capture.
 
 ## Output
 
