@@ -73,3 +73,7 @@ AB  len:u16le  ver=3  counter:u16le  id=2  mlen=10  flags  channel  rssi
 - Bit 0 of `flags` is the CRC-OK flag.
 - Packets whose access address is not `D6 BE 89 8E` (connection traffic) are
   ignored.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
