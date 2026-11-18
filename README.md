@@ -64,16 +64,19 @@ The firmware sends frames delimited by `0xAB` ... `0xBC` with this header
 ```
 AB  len:u16le  ver=3  counter:u16le  id=2  mlen=10  flags  channel  rssi
     event_counter:u16le  timestamp:u32le
-    access_address:4  pdu_header  pdu_len  addr_type
-    adv_address:6  [pad:1]  adv_data  crc:3   BC
+    access_address:4  pdu_header  pdu_len  pad
+    adv_address:6  adv_data  crc:3   BC
 ```
 
 - `id = 2` is an over-the-air packet event, `mlen` is the length of the
   sniffer's own BLE header.
 - `rssi` is a positive magnitude, the dBm value is `-rssi`.
 - `pdu_len` counts the address plus the advertising data.
-- Some frames contain one padding byte between the address and the data; the
-  data is located by anchoring on the frame trailer so both variants parse.
+- One pad byte that is not sent on air follows `pdu_len`, before the address.
+- Some frames are one byte longer than the packet: the byte is padding before
+  the advertising data, padding after it, or a last data byte that `pdu_len` did
+  not count. The layout that yields complete AD structures is used, so the first
+  byte of the advertising data is not lost.
 - Bit 0 of `flags` is the CRC-OK flag.
 - Packets whose access address is not `D6 BE 89 8E` (connection traffic) are
   ignored.

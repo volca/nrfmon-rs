@@ -4,16 +4,18 @@
 //!
 //!     AB  <len:u16le> <ver=3> <counter:u16le> <id=2> <mlen=10> <flags> <channel> <rssi>
 //!         <event_counter:u16le> <timestamp:u32le>
-//!         <access_address:4> <pdu_header> <pdu_len> <addr_type>
-//!         <adv_address:6> [pad:1] <adv_data> <crc:3>  BC
+//!         <access_address:4> <pdu_header> <pdu_len> <pad>
+//!         <adv_address:6> <adv_data> <crc:3>  BC
 //!
 //! * AB starts a frame, BC is the last byte before the next AB.
 //! * id = 2 marks an over-the-air packet event (mlen = 10 is the length of the
 //!   sniffer's own BLE header that follows it).
 //! * rssi is stored as a positive magnitude, so the dBm value is -rssi.
 //! * pdu_len counts the advertising address plus the advertising data.
-//! * the padding byte is not always present; the advertising data is located by
-//!   anchoring on the frame trailer, which tolerates both variants.
+//! * the frame is sometimes one byte longer than the packet. The extra byte can
+//!   be padding before the data, padding after the data, or a last data byte the
+//!   PDU length did not count, so the data length and start are chosen by the
+//!   layout that splits the buffer into complete AD structures.
 //! * bit 0 of the flags byte is the CRC-OK flag.
 
 use std::env;
@@ -299,13 +301,31 @@ fn parse_frame(frame: &[u8]) -> Option<AdvPacket> {
     if pdu_len < 6 {
         return None;
     }
-    let data_len = pdu_len - 6;
+    let mut data_len = pdu_len - 6;
 
-    // The advertising data sits right before the 3 byte CRC; a padding byte may
-    // be inserted between the address and the data.
-    let data_start = frame.len().checked_sub(3 + data_len)?;
-    if data_start != 29 && data_start != 30 {
+    // The frame is sometimes one byte longer than address + data + CRC. That
+    // byte is hardware padding in front of the data, padding after the data, or
+    // real advertising data that the PDU length did not count, so try the
+    // layouts that fit and keep the one with complete AD structures.
+    let extra = frame.len().checked_sub(32 + data_len)?;
+    if extra > 1 {
         return None;
+    }
+
+    let pdu_type = pdu_header & 0x0F;
+    let mut data_start = 29;
+    if extra == 1 && matches!(pdu_type, 0 | 2 | 4 | 6) {
+        let at_29 = ad_structures_ok(&frame[29..29 + data_len]);
+        let at_30 = ad_structures_ok(&frame[30..30 + data_len]);
+        if !at_29 {
+            if ad_structures_ok(&frame[29..29 + data_len + 1]) {
+                data_len += 1; // the length byte did not count the last byte
+            } else if at_30 {
+                data_start = 30; // the extra byte sits before the data
+            }
+        } else if frame[29] == 0 && at_30 {
+            data_start = 30; // a zero first byte is padding, not a data start
+        }
     }
 
     let mut address = [0u8; 6];
@@ -315,10 +335,27 @@ fn parse_frame(frame: &[u8]) -> Option<AdvPacket> {
         channel: frame[8],
         rssi: -(frame[9] as i16),
         crc_ok: frame[7] & 1 != 0,
-        pdu_type: pdu_header & 0x0F,
+        pdu_type,
         address,
         data: frame[data_start..data_start + data_len].to_vec(),
     })
+}
+
+/// True when the buffer can be split into complete AD structures. A zero length
+/// byte marks the beginning of padding and is accepted as the end of the data.
+fn ad_structures_ok(data: &[u8]) -> bool {
+    let mut i = 0;
+    while i < data.len() {
+        let len = data[i] as usize;
+        if len == 0 {
+            return true;
+        }
+        if len > data.len() - i - 1 {
+            return false;
+        }
+        i += 1 + len;
+    }
+    true
 }
 
 impl AdvPacket {
